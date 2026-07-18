@@ -9,6 +9,7 @@ TEST := bin/logger_tests
 LIB_SRCS  := $(wildcard src/logger/*.cpp)
 APP_SRCS  := $(wildcard app/*.cpp)
 TEST_SRCS := $(wildcard tests/*.cpp)
+APP_LIB_SRCS := $(filter-out app/main.cpp,$(APP_SRCS))
 
 LINK_LIB := -Lbin -llogger -Wl,-rpath,'$$ORIGIN'
 
@@ -28,9 +29,9 @@ $(APP): $(APP_SRCS) $(LIB)
 	@mkdir -p bin
 	$(CXX) $(CXXFLAGS) -o $@ $(APP_SRCS) $(LINK_LIB) $(LDLIBS)
 
-$(TEST): $(TEST_SRCS) $(LIB)
+$(TEST): $(TEST_SRCS) $(APP_LIB_SRCS) $(LIB)
 	@mkdir -p bin
-	$(CXX) $(CXXFLAGS) -Isrc -Iapp -o $@ $(TEST_SRCS) $(LINK_LIB) $(LDLIBS)
+	$(CXX) $(CXXFLAGS) -Isrc -Iapp -o $@ $(TEST_SRCS) $(APP_LIB_SRCS) $(LINK_LIB) $(LDLIBS)
 
 test: $(TEST)
 	./$(TEST)
