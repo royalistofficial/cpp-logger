@@ -1,9 +1,5 @@
 #pragma once
 
-// Минимальный тестовый фреймворк: регистрация тестов через статические
-// объекты, запуск из test_main.cpp. Сторонние библиотеки условиями задания
-// запрещены, поэтому реализация умышленно предельно простая.
-
 #include <functional>
 #include <sstream>
 #include <string>
@@ -11,14 +7,12 @@
 
 namespace testing {
 
-/// Одна проваленная проверка внутри теста.
 struct Failure {
     std::string file;
     int line;
     std::string message;
 };
 
-/// Контекст выполняемого теста: собирает провалы, не прерывая тест.
 class TestContext {
 public:
     void addFailure(const char* file, int line, std::string message) {
@@ -32,7 +26,6 @@ private:
     std::vector<Failure> failures_;
 };
 
-/// Глобальный реестр тестов.
 class Registry {
 public:
     using TestBody = std::function<void(TestContext&)>;
@@ -63,10 +56,9 @@ struct Registrar {
     }
 };
 
-/// Запускает все зарегистрированные тесты. Возвращает код выхода процесса.
 int runAll();
 
-}  // namespace testing
+}
 
 namespace testing {
 
@@ -79,16 +71,15 @@ std::string describe(const T& value) {
 
 inline std::string describe(bool value) { return value ? "true" : "false"; }
 
-}  // namespace testing
+}  
 
-/// Объявление теста: TEST(имя) { ... }
 #define TEST(test_name)                                                     \
     static void test_name(testing::TestContext& ctx_);                      \
     static const testing::Registrar registrar_##test_name(#test_name,       \
                                                           test_name);       \
     static void test_name([[maybe_unused]] testing::TestContext& ctx_)
 
-/// Проверка истинности
+
 #define CHECK(condition)                                                    \
     do {                                                                    \
         if (!(condition)) {                                                 \
@@ -97,7 +88,6 @@ inline std::string describe(bool value) { return value ? "true" : "false"; }
         }                                                                   \
     } while (false)
 
-/// Проверка равенства
 #define CHECK_EQ(actual, expected)                                          \
     do {                                                                    \
         const auto actual_value_ = (actual);                                \

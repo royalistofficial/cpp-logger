@@ -30,7 +30,7 @@ $(APP): $(APP_SRCS) $(LIB)
 
 $(TEST): $(TEST_SRCS) $(LIB)
 	@mkdir -p bin
-	$(CXX) $(CXXFLAGS) -Iapp -o $@ $(TEST_SRCS) $(LINK_LIB) $(LDLIBS)
+	$(CXX) $(CXXFLAGS) -Isrc -Iapp -o $@ $(TEST_SRCS) $(LINK_LIB) $(LDLIBS)
 
 test: $(TEST)
 	./$(TEST)
