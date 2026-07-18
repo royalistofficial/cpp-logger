@@ -13,7 +13,7 @@ namespace logger {
 struct LogRecord {
     std::string text;
     LogLevel level = LogLevel::Info;
-    std::chrono::system_clock::time_point timestamp;
+    std::chrono::system_clock::time_point timestamp{};
 };
 
-}
+}  // namespace logger

@@ -8,6 +8,8 @@
 
 namespace app {
 
+inline constexpr char kEscapeChar = '\\';
+
 /**
  * @brief Результат разбора строки, введённой пользователем.
  */
@@ -24,4 +26,7 @@ struct ParsedInput {
  */
 ParsedInput parseInput(std::string_view line);
 
-}
+/// @return Описание синтаксиса ввода. Общий текст для справки и приветствия.
+std::string inputSyntaxHelp();
+
+}  // namespace app

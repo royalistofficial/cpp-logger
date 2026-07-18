@@ -11,19 +11,19 @@ struct LevelName {
 };
 
 constexpr LevelName kLevelNames[] = {
-    {"INFO", LogLevel::Info},
+    {"INFO",    LogLevel::Info},
     {"WARNING", LogLevel::Warning},
-    {"WARN", LogLevel::Warning},
-    {"ERROR", LogLevel::Error},
-    {"ERR", LogLevel::Error},
+    {"WARN",    LogLevel::Warning},
+    {"ERROR",   LogLevel::Error},
+    {"ERR",     LogLevel::Error},
 };
 
 constexpr char toUpper(char c) noexcept {
     return (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c;
 }
 
-/// Сравнение строк без учёта регистра.
-bool equalsIgnoreCase(std::string_view lhs, std::string_view rhs) noexcept {
+constexpr bool equalsIgnoreCase(std::string_view lhs,
+                                std::string_view rhs) noexcept {
     if (lhs.size() != rhs.size()) {
         return false;
     }
@@ -35,7 +35,7 @@ bool equalsIgnoreCase(std::string_view lhs, std::string_view rhs) noexcept {
     return true;
 }
 
-}
+}  // namespace
 
 std::string_view toString(LogLevel level) noexcept {
     switch (level) {
@@ -58,4 +58,4 @@ std::optional<LogLevel> parseLevel(std::string_view text) noexcept {
     return std::nullopt;
 }
 
-}  
+}  // namespace logger

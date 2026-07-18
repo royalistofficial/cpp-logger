@@ -1,8 +1,9 @@
 #pragma once
 
+#include "logger/Export.hpp"
 #include "logger/ILogFormatter.hpp"
-#include "logger/ILogger.hpp"
 #include "logger/ILogSink.hpp"
+#include "logger/ILogger.hpp"
 
 #include <atomic>
 #include <memory>
@@ -13,8 +14,12 @@ namespace logger {
 
 /**
  * @brief Реализация журнала: фильтрация по уровню и потокобезопасная запись.
+ *
+ * Класс отвечает только за политику (порог, синхронизацию) и делегирует
+ * представление записи форматтеру, а ввод-вывод — приёмнику. Заменив их,
+ * можно писать в сокет или в другом формате, не трогая этот класс.
  */
-class Logger final : public ILogger {
+class LOGGER_API Logger final : public ILogger {
 public:
     /**
      * @param sink Приёмник готовых строк. Не может быть nullptr.
@@ -34,12 +39,15 @@ public:
     LogLevel defaultLevel() const noexcept override;
 
 private:
+    /// Форматирует и записывает без проверки порога.
+    void emit(std::string_view message, LogLevel level,
+              std::chrono::system_clock::time_point timestamp);
+
     std::unique_ptr<ILogSink> sink_;
     std::unique_ptr<ILogFormatter> formatter_;
 
     std::atomic<LogLevel> defaultLevel_;
-
-    mutable std::mutex sinkMutex_;
+    std::mutex sinkMutex_;
 };
 
 /**
@@ -48,7 +56,7 @@ private:
  * @param defaultLevel Начальный порог важности.
  * @throw std::runtime_error если файл не удалось открыть.
  */
-std::unique_ptr<ILogger> makeFileLogger(const std::string& path,
-                                        LogLevel defaultLevel);
+LOGGER_API std::unique_ptr<ILogger> makeFileLogger(const std::string& path,
+                                                   LogLevel defaultLevel);
 
-}
+}  // namespace logger

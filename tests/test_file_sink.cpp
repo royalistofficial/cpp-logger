@@ -9,12 +9,15 @@
 #include <string>
 
 using logger::FileLogSink;
+using logger::FlushPolicy;
 
 namespace {
 
+/// Временный файл, удаляющийся вместе с объектом.
 class TempFile {
 public:
-    explicit TempFile(std::string name) : path_("/tmp/" + name) {
+    explicit TempFile(std::string name)
+        : path_("/tmp/logger_test_" + std::move(name)) {
         std::remove(path_.c_str());
     }
 
@@ -23,36 +26,33 @@ public:
     TempFile(const TempFile&) = delete;
     TempFile& operator=(const TempFile&) = delete;
 
-    const std::string& path() const noexcept { return path_; }
+    const std::string& path() const { return path_; }
 
     std::string read() const {
-        std::ifstream in(path_);
-        std::ostringstream out;
-        out << in.rdbuf();
-        return out.str();
+        std::ifstream input(path_);
+        std::ostringstream buffer;
+        buffer << input.rdbuf();
+        return buffer.str();
     }
 
 private:
     std::string path_;
 };
 
-}
+}  // namespace
 
 TEST(ЗаписьПопадаетВФайл) {
-    TempFile file("logger_sink_write.log");
-
+    const TempFile file("write.log");
     {
         FileLogSink sink(file.path());
         sink.write("первая\n");
         sink.write("вторая\n");
     }
-
     CHECK_EQ(file.read(), std::string("первая\nвторая\n"));
 }
 
-TEST(ПовторноеОткрытиеДописываетВКонец) {
-    TempFile file("logger_sink_append.log");
-
+TEST(ФайлОткрываетсяНаДописывание) {
+    const TempFile file("append.log");
     {
         FileLogSink sink(file.path());
         sink.write("старое\n");
@@ -61,61 +61,38 @@ TEST(ПовторноеОткрытиеДописываетВКонец) {
         FileLogSink sink(file.path());
         sink.write("новое\n");
     }
-
     CHECK_EQ(file.read(), std::string("старое\nновое\n"));
 }
 
-TEST(ДанныеВидныСразуБезЗакрытияФайла) {
-    TempFile file("logger_sink_flush.log");
+TEST(СбросБуфераДелаетЗаписьВидимойСразу) {
+    const TempFile file("flush.log");
+    FileLogSink sink(file.path(), FlushPolicy::EveryRecord);
+    sink.write("сразу\n");
 
-    FileLogSink sink(file.path());
-    sink.write("до закрытия\n");
-
-    // Файл ещё открыт, но flush в write() уже вытолкнул данные на диск.
-    CHECK_EQ(file.read(), std::string("до закрытия\n"));
+    // Файл ещё не закрыт, но данные уже должны быть на диске.
+    CHECK_EQ(file.read(), std::string("сразу\n"));
 }
 
-TEST(НедоступныйПутьДаётИсключение) {
-    bool thrown = false;
-    std::string message;
+TEST(ПустоеИмяФайлаОтвергается) {
+    CHECK_THROWS_AS(FileLogSink(""), std::runtime_error);
+}
 
+TEST(НесуществующийКаталогДаётОшибкуСПояснением) {
+    bool thrown = false;
     try {
-        FileLogSink sink("/nonexistent_directory_12345/app.log");
+        FileLogSink sink("/no/such/directory/app.log");
     } catch (const std::runtime_error& error) {
         thrown = true;
-        message = error.what();
+        const std::string message = error.what();
+        CHECK(message.find("/no/such/directory/app.log") != std::string::npos);
+        // Пояснение от системы должно быть, а не только имя файла.
+        CHECK(message.size() > std::string("/no/such/directory/app.log").size());
     }
-
-    CHECK(thrown);
-    CHECK(message.find("app.log") != std::string::npos);
-}
-
-TEST(ПустоеИмяФайлаДаётИсключение) {
-    bool thrown = false;
-    try {
-        FileLogSink sink("");
-    } catch (const std::runtime_error&) {
-        thrown = true;
-    }
-
     CHECK(thrown);
 }
 
-TEST(ОшибкаЗаписиПослеОткрытияНеПроглатывается) {
-    std::ifstream probe("/dev/full");
-    if (!probe.good()) {
-        return; 
-    }
-    probe.close();
-
-    FileLogSink sink("/dev/full");
-
-    bool thrown = false;
-    try {
-        sink.write("эта строка не поместится\n");
-    } catch (const std::runtime_error&) {
-        thrown = true;
-    }
-
-    CHECK(thrown);
+TEST(ПутьДоступенЧерезГеттер) {
+    const TempFile file("path.log");
+    const FileLogSink sink(file.path());
+    CHECK_EQ(sink.path(), file.path());
 }

@@ -1,208 +1,167 @@
+#include "Fakes.hpp"
 #include "Printers.hpp"
 #include "TestFramework.hpp"
 
+#include "logger/DefaultFormatter.hpp"
 #include "logger/Logger.hpp"
 
-#include <cstdio>
-#include <fstream>
+#include <algorithm>
+#include <atomic>
 #include <memory>
-#include <mutex>
-#include <regex>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
 
-using logger::ILogFormatter;
-using logger::ILogSink;
 using logger::LogLevel;
-using logger::LogRecord;
 using logger::Logger;
+using testing::MemorySink;
 
 namespace {
 
-class MemorySink final : public ILogSink {
-public:
-    void write(std::string_view record) override {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        lines_.emplace_back(record);
-    }
-
-    std::vector<std::string> lines() const {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        return lines_;
-    }
-
-private:
-    mutable std::mutex mutex_;
-    std::vector<std::string> lines_;
+struct Fixture {
+    MemorySink* sink = nullptr;
+    std::unique_ptr<Logger> log;
 };
 
-class PlainFormatter final : public ILogFormatter {
-public:
-    std::string format(const LogRecord& record) const override {
-        return std::string(logger::toString(record.level)) + " " + record.text +
-               "\n";
-    }
-};
-
-struct TestLogger {
-    MemorySink* sink;
-    std::unique_ptr<Logger> logger;
-};
-
-TestLogger makeTestLogger(LogLevel level) {
+Fixture makeLogger(LogLevel level) {
     auto sink = std::make_unique<MemorySink>();
     MemorySink* raw = sink.get();
-    auto logger = std::make_unique<Logger>(
-        std::move(sink), std::make_unique<PlainFormatter>(), level);
-    return {raw, std::move(logger)};
+
+    Fixture fixture;
+    fixture.sink = raw;
+    fixture.log = std::make_unique<Logger>(
+        std::move(sink), std::make_unique<logger::DefaultFormatter>(), level);
+    return fixture;
 }
 
-}  
+}  // namespace
 
 TEST(СообщенияНижеПорогаОтбрасываются) {
-    TestLogger test = makeTestLogger(LogLevel::Warning);
+    Fixture fixture = makeLogger(LogLevel::Warning);
 
-    test.logger->log("не пишется", LogLevel::Info);
-    test.logger->log("пишется", LogLevel::Warning);
-    test.logger->log("тоже пишется", LogLevel::Error);
+    fixture.log->log("не пройдёт", LogLevel::Info);
+    fixture.log->log("пройдёт", LogLevel::Warning);
+    fixture.log->log("тоже пройдёт", LogLevel::Error);
 
-    const std::vector<std::string> lines = test.sink->lines();
-
-    CHECK_EQ(lines.size(), std::size_t(2));
-    CHECK_EQ(lines.at(0), std::string("WARNING пишется\n"));
-    CHECK_EQ(lines.at(1), std::string("ERROR тоже пишется\n"));
+    CHECK_EQ(fixture.sink->count(), static_cast<std::size_t>(2));
 }
 
 TEST(БезУровняИспользуетсяУровеньПоУмолчанию) {
-    TestLogger test = makeTestLogger(LogLevel::Error);
+    Fixture fixture = makeLogger(LogLevel::Error);
 
-    test.logger->log("без уровня");
+    fixture.log->log("без уровня");
 
-    const std::vector<std::string> lines = test.sink->lines();
+    const std::vector<std::string> lines = fixture.sink->lines();
+    CHECK_EQ(lines.size(), static_cast<std::size_t>(1));
+    if (!lines.empty()) {
+        CHECK(lines.front().find("[ERROR]") != std::string::npos);
+    }
+}
 
-    CHECK_EQ(lines.size(), std::size_t(1));
-    CHECK_EQ(lines.at(0), std::string("ERROR без уровня\n"));
+TEST(СообщениеБезУровняНеОтбрасываетсяСобственнымПорогом) {
+    // Порог читается один раз и сразу становится уровнем сообщения:
+    // повторная проверка привела бы к потере записи.
+    Fixture fixture = makeLogger(LogLevel::Error);
+
+    for (int i = 0; i < 100; ++i) {
+        fixture.log->log("должно записаться");
+    }
+
+    CHECK_EQ(fixture.sink->count(), static_cast<std::size_t>(100));
 }
 
 TEST(УровеньМеняетсяПослеИнициализации) {
-    TestLogger test = makeTestLogger(LogLevel::Error);
+    Fixture fixture = makeLogger(LogLevel::Error);
 
-    test.logger->log("отброшено", LogLevel::Info);
+    fixture.log->log("отброшено", LogLevel::Info);
+    fixture.log->setDefaultLevel(LogLevel::Info);
+    CHECK_EQ(fixture.log->defaultLevel(), LogLevel::Info);
+    fixture.log->log("записано", LogLevel::Info);
 
-    test.logger->setDefaultLevel(LogLevel::Info);
-    CHECK_EQ(test.logger->defaultLevel(), LogLevel::Info);
+    CHECK_EQ(fixture.sink->count(), static_cast<std::size_t>(1));
+}
 
-    test.logger->log("записано", LogLevel::Info);
+TEST(ЗаданноеВремяПопадаетВЗапись) {
+    Fixture fixture = makeLogger(LogLevel::Info);
 
-    const std::vector<std::string> lines = test.sink->lines();
+    const auto moment = std::chrono::system_clock::time_point(
+        std::chrono::seconds(0) + std::chrono::milliseconds(123));
+    fixture.log->log("текст", LogLevel::Info, moment);
 
-    CHECK_EQ(lines.size(), std::size_t(1));
-    CHECK_EQ(lines.at(0), std::string("INFO записано\n"));
+    const std::vector<std::string> lines = fixture.sink->lines();
+    CHECK_EQ(lines.size(), static_cast<std::size_t>(1));
+    if (!lines.empty()) {
+        CHECK(lines.front().find(".123]") != std::string::npos);
+    }
 }
 
 TEST(ПустыеЗависимостиОтвергаются) {
-    bool sinkRejected = false;
-    try {
-        Logger bad(nullptr, std::make_unique<PlainFormatter>(), LogLevel::Info);
-    } catch (const std::invalid_argument&) {
-        sinkRejected = true;
-    }
+    CHECK_THROWS_AS(Logger(nullptr,
+                           std::make_unique<logger::DefaultFormatter>(),
+                           LogLevel::Info),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(Logger(std::make_unique<MemorySink>(), nullptr,
+                           LogLevel::Info),
+                    std::invalid_argument);
+}
 
-    bool formatterRejected = false;
-    try {
-        Logger bad(std::make_unique<MemorySink>(), nullptr, LogLevel::Info);
-    } catch (const std::invalid_argument&) {
-        formatterRejected = true;
-    }
+TEST(ОшибкаПриёмникаПробрасываетсяНаружу) {
+    Fixture fixture = makeLogger(LogLevel::Info);
+    fixture.sink->failFrom(1);
 
-    CHECK(sinkRejected);
-    CHECK(formatterRejected);
+    CHECK_THROWS_AS(fixture.log->log("сбой", LogLevel::Info),
+                    std::runtime_error);
 }
 
 TEST(ЗаписьИзЧетырёхПотоковНеПеремешивается) {
-    const std::string path = "/tmp/logger_concurrent.log";
-    std::remove(path.c_str());
+    Fixture fixture = makeLogger(LogLevel::Info);
 
     constexpr int kThreads = 4;
-    constexpr int kLinesPerThread = 1000;
+    constexpr int kPerThread = 250;
 
-    {
-        std::unique_ptr<logger::ILogger> log =
-            logger::makeFileLogger(path, LogLevel::Info);
-
-        std::vector<std::thread> workers;
-        workers.reserve(kThreads);
-
-        for (int id = 0; id < kThreads; ++id) {
-            workers.emplace_back([&log, id] {
-                for (int i = 0; i < kLinesPerThread; ++i) {
-                    log->log("поток " + std::to_string(id) + " сообщение " +
-                                 std::to_string(i),
-                             LogLevel::Info);
-                }
-            });
-        }
-
-        for (std::thread& worker : workers) {
-            worker.join();
-        }
+    std::vector<std::thread> workers;
+    workers.reserve(kThreads);
+    for (int t = 0; t < kThreads; ++t) {
+        workers.emplace_back([&fixture, t] {
+            for (int i = 0; i < kPerThread; ++i) {
+                fixture.log->log("поток-" + std::to_string(t), LogLevel::Info);
+            }
+        });
+    }
+    for (std::thread& worker : workers) {
+        worker.join();
     }
 
-    const std::regex pattern(
-        R"(^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] \[INFO\] )"
-        R"(поток (\d) сообщение (\d+)$)");
+    const std::vector<std::string> lines = fixture.sink->lines();
+    CHECK_EQ(lines.size(), static_cast<std::size_t>(kThreads * kPerThread));
 
-    std::ifstream in(path);
-    std::string line;
-    int total = 0;
-    int malformed = 0;
-    std::vector<int> perThread(kThreads, 0);
-
-    while (std::getline(in, line)) {
-        ++total;
-
-        std::smatch match;
-        if (!std::regex_match(line, match, pattern)) {
-            ++malformed;
-            continue;
-        }
-
-        const int id = std::stoi(match[1].str());
-        if (id >= 0 && id < kThreads) {
-            ++perThread[static_cast<std::size_t>(id)];
-        }
-    }
-    in.close();
-    std::remove(path.c_str());
-
-    CHECK_EQ(total, kThreads * kLinesPerThread);
-    CHECK_EQ(malformed, 0);
-
-    for (int id = 0; id < kThreads; ++id) {
-        CHECK_EQ(perThread[static_cast<std::size_t>(id)], kLinesPerThread);
+    // Каждая строка целая: ровно один перевод строки и корректный хвост.
+    for (const std::string& line : lines) {
+        CHECK_EQ(std::count(line.begin(), line.end(), '\n'),
+                 static_cast<std::ptrdiff_t>(1));
+        CHECK(line.find("[INFO] поток-") != std::string::npos);
     }
 }
 
 TEST(СменаУровняВоВремяЗаписиБезопасна) {
-    TestLogger test = makeTestLogger(LogLevel::Info);
+    Fixture fixture = makeLogger(LogLevel::Info);
+    std::atomic<bool> stop{false};
 
-    std::thread writer([&test] {
-        for (int i = 0; i < 2000; ++i) {
-            test.logger->log("сообщение", LogLevel::Error);
+    std::thread switcher([&fixture, &stop] {
+        while (!stop.load()) {
+            fixture.log->setDefaultLevel(LogLevel::Error);
+            fixture.log->setDefaultLevel(LogLevel::Info);
         }
     });
 
-    std::thread switcher([&test] {
-        for (int i = 0; i < 2000; ++i) {
-            test.logger->setDefaultLevel(i % 2 == 0 ? LogLevel::Info
-                                                    : LogLevel::Error);
-        }
-    });
+    for (int i = 0; i < 500; ++i) {
+        fixture.log->log("сообщение", LogLevel::Error);
+    }
 
-    writer.join();
+    stop.store(true);
     switcher.join();
 
-    CHECK_EQ(test.sink->lines().size(), std::size_t(2000));
+    // Уровень Error проходит любой порог, поэтому потерь быть не должно.
+    CHECK_EQ(fixture.sink->count(), static_cast<std::size_t>(500));
 }

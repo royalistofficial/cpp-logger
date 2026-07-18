@@ -5,8 +5,6 @@
 namespace app {
 namespace {
 
-constexpr char kEscapeChar = '\\';
-
 bool isSpace(char c) noexcept {
     return std::isspace(static_cast<unsigned char>(c)) != 0;
 }
@@ -31,18 +29,15 @@ struct SplitResult {
 };
 
 SplitResult splitFirstWord(std::string_view text) noexcept {
-    const std::size_t wordEnd = [&] {
-        std::size_t i = 0;
-        while (i < text.size() && !isSpace(text[i])) {
-            ++i;
-        }
-        return i;
-    }();
+    std::size_t wordEnd = 0;
+    while (wordEnd < text.size() && !isSpace(text[wordEnd])) {
+        ++wordEnd;
+    }
 
     return {text.substr(0, wordEnd), trim(text.substr(wordEnd))};
 }
 
-} 
+}  // namespace
 
 ParsedInput parseInput(std::string_view line) {
     const std::string_view trimmed = trim(line);
@@ -66,4 +61,12 @@ ParsedInput parseInput(std::string_view line) {
     return {std::string(trimmed), std::nullopt};
 }
 
-} 
+std::string inputSyntaxHelp() {
+    return
+        "Ввод: \"<уровень> <текст>\" либо просто \"<текст>\".\n"
+        "Уровни: INFO, WARNING (WARN), ERROR (ERR), регистр не важен.\n"
+        "Чтобы записать текст, начинающийся со слова-уровня, дословно,\n"
+        "поставьте перед ним обратный слэш: \\error в модуле оплаты\n";
+}
+
+}  // namespace app

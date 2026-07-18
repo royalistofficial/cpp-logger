@@ -100,3 +100,33 @@ inline std::string describe(bool value) { return value ? "true" : "false"; }
             ctx_.addFailure(__FILE__, __LINE__, oss_.str());                \
         }                                                                   \
     } while (false)
+
+#define CHECK_THROWS_AS(expression, exception_type)                         \
+    do {                                                                    \
+        bool thrown_ = false;                                               \
+        try {                                                               \
+            (void)(expression);                                             \
+        } catch (const exception_type&) {                                   \
+            thrown_ = true;                                                 \
+        } catch (...) {                                                     \
+            ctx_.addFailure(__FILE__, __LINE__,                             \
+                            "брошено исключение неожиданного типа: "        \
+                            #expression);                                   \
+            break;                                                          \
+        }                                                                   \
+        if (!thrown_) {                                                     \
+            ctx_.addFailure(__FILE__, __LINE__,                             \
+                            "ожидалось исключение " #exception_type         \
+                            " от: " #expression);                           \
+        }                                                                   \
+    } while (false)
+
+#define CHECK_NO_THROW(expression)                                          \
+    do {                                                                    \
+        try {                                                               \
+            (void)(expression);                                             \
+        } catch (...) {                                                     \
+            ctx_.addFailure(__FILE__, __LINE__,                             \
+                            "неожиданное исключение от: " #expression);     \
+        }                                                                   \
+    } while (false)

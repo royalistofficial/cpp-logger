@@ -1,5 +1,8 @@
 #include "CliOptions.hpp"
 
+#include "CommandProcessor.hpp"
+#include "InputParser.hpp"
+
 #include <string_view>
 
 namespace app {
@@ -9,7 +12,7 @@ bool isHelpFlag(std::string_view argument) noexcept {
     return argument == "-h" || argument == "--help";
 }
 
-} 
+}  // namespace
 
 CliParseResult parseCommandLine(int argc, const char* const* argv) {
     CliParseResult result;
@@ -59,15 +62,12 @@ std::string usageText(const std::string& programName) {
     return "Использование: " + programName +
            " <файл журнала> [уровень по умолчанию]\n"
            "\n"
-           "  файл журнала        путь к текстовому файлу; создаётся при "
+           "  файл журнала          путь к текстовому файлу; создаётся при "
            "отсутствии\n"
-           "  уровень по умолчанию  INFO, WARNING или ERROR "
-           "(по умолчанию INFO)\n"
-           "\n"
-           "Ввод: \"<уровень> <текст>\" либо просто \"<текст>\".\n"
-           "Чтобы текст, начинающийся со слова-уровня, был записан "
-           "дословно,\n"
-           "поставьте перед ним обратный слэш: \\error в модуле оплаты\n";
+           "  уровень по умолчанию  INFO, WARNING или ERROR (по умолчанию "
+           "INFO)\n"
+           "\n" +
+           inputSyntaxHelp() + "\nКоманды:\n" + CommandProcessor::helpText();
 }
 
-}
+}  // namespace app

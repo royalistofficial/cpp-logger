@@ -7,9 +7,12 @@
 
 namespace app {
 
+/**
+ * @brief Параметры запуска приложения.
+ */
 struct CliOptions {
-    std::string logFile;     
-    logger::LogLevel defaultLevel = logger::LogLevel::Info; 
+    std::string logFile;
+    logger::LogLevel defaultLevel = logger::LogLevel::Info;
 };
 
 /**
@@ -17,7 +20,7 @@ struct CliOptions {
  */
 struct CliParseResult {
     std::optional<CliOptions> options;
-    std::string error; 
+    std::string error;
     bool helpRequested = false;
 };
 
@@ -29,4 +32,4 @@ CliParseResult parseCommandLine(int argc, const char* const* argv);
 /// @return Текст справки по использованию.
 std::string usageText(const std::string& programName);
 
-} 
+}  // namespace app

@@ -8,27 +8,29 @@
 namespace logger {
 
 /**
+ * @brief Политика сброса буфера файла.
+ */
+enum class FlushPolicy {
+    EveryRecord,
+    Buffered
+};
+
+/**
  * @brief Запись строк журнала в текстовый файл.
- *
- * Файл открывается в режиме дописывания в конструкторе и закрывается в
- * деструкторе. Класс не синхронизирует доступ: за это отвечает вызывающая
- * сторона (класс Logger).
  */
 class FileLogSink final : public ILogSink {
 public:
     /**
      * @param path Путь к файлу журнала. Файл создаётся, если отсутствует.
-     * @throw std::runtime_error если файл не удалось открыть.
+     * @param flushPolicy Когда сбрасывать буфер на диск.
+     * @throw std::runtime_error если имя пустое или файл не удалось открыть.
      */
-    explicit FileLogSink(std::string path);
+    explicit FileLogSink(std::string path,
+                         FlushPolicy flushPolicy = FlushPolicy::EveryRecord);
 
     /**
-     * @brief Дописывает строку в файл и сбрасывает буфер.
+     * @brief Дописывает строку в файл.
      * @throw std::runtime_error если запись не удалась.
-     *
-     * Сброс буфера после каждой записи гарантирует, что сообщения не
-     * потеряются при аварийном завершении программы, и что об ошибке станет
-     * известно сразу, а не при закрытии файла.
      */
     void write(std::string_view record) override;
 
@@ -37,6 +39,7 @@ public:
 
 private:
     std::string path_;
+    FlushPolicy flushPolicy_;
     std::ofstream stream_;
 };
 

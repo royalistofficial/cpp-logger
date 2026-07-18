@@ -1,304 +1,155 @@
+#include "Fakes.hpp"
 #include "Printers.hpp"
 #include "TestFramework.hpp"
 
 #include "Application.hpp"
-#include "LogWriterThread.hpp"
 
-#include "logger/ILogger.hpp"
-
-#include <cstdio>
-#include <chrono>
-#include <fstream>
-#include <iostream>
-#include <mutex>
 #include <sstream>
-#include <stdexcept>
-#include <thread>
 #include <string>
 #include <vector>
 
 using app::Application;
 using app::CliOptions;
-using app::LogQueue;
 using app::LogRequest;
-using app::LogWriterThread;
-using app::SetLevelCommand;
 using logger::LogLevel;
+using testing::FakeMessageSink;
 
 namespace {
 
-class FakeLogger final : public logger::ILogger {
-public:
-    struct Entry {
-        std::string text;
-        LogLevel level;
-    };
+struct Fixture {
+    FakeMessageSink sink;
+    std::istringstream input;
+    std::ostringstream output;
 
-    void log(std::string_view message, LogLevel level) override {
-        log(message, level, std::chrono::system_clock::now());
-    }
-
-    void log(std::string_view message) override {
-        log(message, defaultLevel());
-    }
-
-    void log(std::string_view message, LogLevel level,
-             std::chrono::system_clock::time_point) override {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        if (failing_) {
-            throw std::runtime_error("диск недоступен");
-        }
-        if (level >= level_) {
-            entries_.push_back({std::string(message), level});
-        }
-    }
-
-    void setDefaultLevel(LogLevel level) noexcept override {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        level_ = level;
-    }
-
-    LogLevel defaultLevel() const noexcept override {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        return level_;
-    }
-
-    void setFailing(bool failing) {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        failing_ = failing;
-    }
-
-    std::vector<Entry> entries() const {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        return entries_;
-    }
-
-private:
-    mutable std::mutex mutex_;
-    std::vector<Entry> entries_;
-    LogLevel level_ = LogLevel::Info;
-    bool failing_ = false;
-};
-
-LogRequest makeRequest(std::string text, LogLevel level) {
-    LogRequest request;
-    request.text = std::move(text);
-    request.level = level;
-    request.timestamp = std::chrono::system_clock::now();
-    return request;
-}
-
-class TempLog {
-public:
-    explicit TempLog(std::string name) : path_("/tmp/" + name) {
-        std::remove(path_.c_str());
-    }
-    ~TempLog() { std::remove(path_.c_str()); }
-
-    TempLog(const TempLog&) = delete;
-    TempLog& operator=(const TempLog&) = delete;
-
-    const std::string& path() const noexcept { return path_; }
-
-    std::vector<std::string> lines() const {
-        std::ifstream in(path_);
-        std::vector<std::string> result;
-        std::string line;
-        while (std::getline(in, line)) {
-            result.push_back(line);
-        }
+    CliOptions options(LogLevel level = LogLevel::Info) const {
+        CliOptions result;
+        result.logFile = "test.log";
+        result.defaultLevel = level;
         return result;
     }
 
-private:
-    std::string path_;
+    std::vector<LogRequest> run(const std::string& lines,
+                                LogLevel level = LogLevel::Info) {
+        input.str(lines);
+        Application application(options(level), sink);
+        application.run(input, output);
+        return sink.requests();
+    }
 };
 
 }  // namespace
 
-TEST(ПотокЗаписиОбрабатываетВсюОчередь) {
-    FakeLogger fake;
-    LogQueue queue;
+TEST(КаждаяСтрокаСтановитсяСообщением) {
+    Fixture fixture;
+    const std::vector<LogRequest> requests = fixture.run("первое\nвторое\n");
 
-    {
-        LogWriterThread writer(queue, fake);
-
-        queue.push(makeRequest("первое", LogLevel::Info));
-        queue.push(makeRequest("второе", LogLevel::Error));
-        queue.close();
-    }  // Деструктор дожидается завершения потока.
-
-    const std::vector<FakeLogger::Entry> entries = fake.entries();
-
-    CHECK_EQ(entries.size(), std::size_t(2));
-    if (entries.size() == 2) {
-        CHECK_EQ(entries[0].text, std::string("первое"));
-        CHECK_EQ(entries[1].text, std::string("второе"));
+    CHECK_EQ(requests.size(), static_cast<std::size_t>(2));
+    if (requests.size() == 2) {
+        CHECK_EQ(requests[0].text, std::string("первое"));
+        CHECK_EQ(requests[1].text, std::string("второе"));
     }
 }
 
-TEST(ОшибкаЗаписиНеОстанавливаетПоток) {
-    FakeLogger fake;
-    LogQueue queue;
+TEST(УровеньИзСтрокиПередаётсяДальше) {
+    Fixture fixture;
+    const std::vector<LogRequest> requests =
+        fixture.run("error диск переполнен\n");
 
-    fake.setFailing(true);
-
-    std::ostringstream captured;
-    std::streambuf* saved = std::cerr.rdbuf(captured.rdbuf());
-
-    LogWriterThread writer(queue, fake);
-    queue.push(makeRequest("потеряется", LogLevel::Error));
-
-    while (writer.failed() == 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    fake.setFailing(false);
-
-    queue.push(makeRequest("запишется", LogLevel::Error));
-    queue.close();
-    writer.join();
-
-    std::cerr.rdbuf(saved);
-
-    CHECK_EQ(writer.failed(), std::size_t(1));
-    CHECK_EQ(writer.processed(), std::size_t(1));
-    CHECK_EQ(fake.entries().size(), std::size_t(1));
-    CHECK(captured.str().find("потеряется") != std::string::npos);
-}
-
-TEST(КомандаСменыУровняПрименяетсяВПорядкеОчереди) {
-    FakeLogger fake;
-    LogQueue queue;
-
-    {
-        LogWriterThread writer(queue, fake);
-
-        queue.push(makeRequest("до смены", LogLevel::Info));
-        queue.push(SetLevelCommand{LogLevel::Error});
-        queue.push(makeRequest("после смены", LogLevel::Info));
-        queue.push(makeRequest("важное", LogLevel::Error));
-        queue.close();
-    }
-
-    const std::vector<FakeLogger::Entry> entries = fake.entries();
-
-    CHECK_EQ(entries.size(), std::size_t(2));
-    if (entries.size() == 2) {
-        CHECK_EQ(entries[0].text, std::string("до смены"));
-        CHECK_EQ(entries[1].text, std::string("важное"));
-    }
-    CHECK_EQ(fake.defaultLevel(), LogLevel::Error);
-}
-
-TEST(ПриложениеЗаписываетВведённыеСообщения) {
-    TempLog log("logger_app_basic.log");
-
-    CliOptions options;
-    options.logFile = log.path();
-    options.defaultLevel = LogLevel::Info;
-
-    std::istringstream input(
-        "первое сообщение\n"
-        "ERROR диск переполнен\n"
-        "\n" 
-        "\\error дословно\n" 
-    );
-    std::ostringstream output;
-
-    const int code = Application(options).run(input, output);
-    CHECK_EQ(code, 0);
-
-    const std::vector<std::string> lines = log.lines();
-    CHECK_EQ(lines.size(), std::size_t(3));
-
-    if (lines.size() == 3) {
-        CHECK(lines[0].find("[INFO] первое сообщение") != std::string::npos);
-        CHECK(lines[1].find("[ERROR] диск переполнен") != std::string::npos);
-        CHECK(lines[2].find("[INFO] error дословно") != std::string::npos);
+    CHECK_EQ(requests.size(), static_cast<std::size_t>(1));
+    if (!requests.empty()) {
+        CHECK_EQ(requests.front().level, LogLevel::Error);
+        CHECK_EQ(requests.front().text, std::string("диск переполнен"));
     }
 }
 
-TEST(ПриложениеОтбрасываетСообщенияНижеПорога) {
-    TempLog log("logger_app_filter.log");
+TEST(БезУровняБерётсяТекущий) {
+    Fixture fixture;
+    const std::vector<LogRequest> requests =
+        fixture.run("сообщение\n", LogLevel::Warning);
 
-    CliOptions options;
-    options.logFile = log.path();
-    options.defaultLevel = LogLevel::Warning;
-
-    std::istringstream input(
-        "INFO это не попадёт\n"
-        "WARNING это попадёт\n");
-    std::ostringstream output;
-
-    Application(options).run(input, output);
-
-    const std::vector<std::string> lines = log.lines();
-
-    CHECK_EQ(lines.size(), std::size_t(1));
-    if (!lines.empty()) {
-        CHECK(lines[0].find("это попадёт") != std::string::npos);
+    CHECK_EQ(requests.size(), static_cast<std::size_t>(1));
+    if (!requests.empty()) {
+        CHECK_EQ(requests.front().level, LogLevel::Warning);
     }
 }
 
-TEST(КомандаLevelМеняетПорогВоВремяРаботы) {
-    TempLog log("logger_app_level.log");
+TEST(ПустыеСтрокиПропускаются) {
+    Fixture fixture;
+    const std::vector<LogRequest> requests = fixture.run("\n   \n\t\nтекст\n");
 
-    CliOptions options;
-    options.logFile = log.path();
-    options.defaultLevel = LogLevel::Info;
+    CHECK_EQ(requests.size(), static_cast<std::size_t>(1));
+}
 
-    std::istringstream input(
-        "INFO до смены\n"
-        ":level error\n"
-        "INFO после смены\n"
-        "ERROR важное\n");
-    std::ostringstream output;
+TEST(КомандаLevelМеняетУровеньПоследующихСообщений) {
+    Fixture fixture;
+    const std::vector<LogRequest> requests =
+        fixture.run("до\n:level error\nпосле\n");
 
-    Application(options).run(input, output);
-
-    const std::vector<std::string> lines = log.lines();
-
-    CHECK_EQ(lines.size(), std::size_t(2));
-    if (lines.size() == 2) {
-        CHECK(lines[0].find("до смены") != std::string::npos);
-        CHECK(lines[1].find("важное") != std::string::npos);
+    CHECK_EQ(requests.size(), static_cast<std::size_t>(2));
+    if (requests.size() == 2) {
+        CHECK_EQ(requests[0].level, LogLevel::Info);
+        CHECK_EQ(requests[1].level, LogLevel::Error);
     }
 }
 
-TEST(КомандаQuitЗавершаетРаботу) {
-    TempLog log("logger_app_quit.log");
+TEST(КомандаНеЗаписываетсяКакСообщение) {
+    Fixture fixture;
+    const std::vector<LogRequest> requests = fixture.run(":level warning\n");
 
-    CliOptions options;
-    options.logFile = log.path();
-    options.defaultLevel = LogLevel::Info;
-
-    std::istringstream input(
-        "до выхода\n"
-        ":quit\n"
-        "после выхода\n");  // не должно быть прочитано
-    std::ostringstream output;
-
-    const int code = Application(options).run(input, output);
-
-    CHECK_EQ(code, 0);
-    CHECK_EQ(log.lines().size(), std::size_t(1));
+    CHECK(requests.empty());
 }
 
-TEST(НедоступныйЖурналДаётКодОшибки) {
-    CliOptions options;
-    options.logFile = "/nonexistent_directory_12345/app.log";
-    options.defaultLevel = LogLevel::Info;
+TEST(QuitПрекращаетЧтение) {
+    Fixture fixture;
+    const std::vector<LogRequest> requests =
+        fixture.run("первое\n:quit\nне читается\n");
 
-    std::istringstream input("сообщение\n");
-    std::ostringstream output;
+    CHECK_EQ(requests.size(), static_cast<std::size_t>(1));
+}
 
-    std::ostringstream captured;
-    std::streambuf* saved = std::cerr.rdbuf(captured.rdbuf());
+TEST(КонецВводаЗавершаетЦикл) {
+    Fixture fixture;
+    const std::vector<LogRequest> requests = fixture.run("только это");
 
-    const int code = Application(options).run(input, output);
+    CHECK_EQ(requests.size(), static_cast<std::size_t>(1));
+}
 
-    std::cerr.rdbuf(saved);
+TEST(ВремяФиксируетсяВПорядкеВвода) {
+    Fixture fixture;
+    const std::vector<LogRequest> requests = fixture.run("a\nb\nc\n");
 
-    CHECK_EQ(code, 1);
-    CHECK(!captured.str().empty());
+    CHECK_EQ(requests.size(), static_cast<std::size_t>(3));
+    for (std::size_t i = 1; i < requests.size(); ++i) {
+        CHECK(requests[i - 1].timestamp <= requests[i].timestamp);
+    }
+}
+
+TEST(ЭкранированнаяСтрокаЗаписываетсяДословно) {
+    Fixture fixture;
+    const std::vector<LogRequest> requests = fixture.run("\\error в модуле\n");
+
+    CHECK_EQ(requests.size(), static_cast<std::size_t>(1));
+    if (!requests.empty()) {
+        CHECK_EQ(requests.front().text, std::string("error в модуле"));
+        CHECK_EQ(requests.front().level, LogLevel::Info);
+    }
+}
+
+TEST(ПриветствиеПоказываетПараметрыИКоманды) {
+    Fixture fixture;
+    fixture.run("", LogLevel::Warning);
+
+    const std::string text = fixture.output.str();
+    CHECK(text.find("test.log") != std::string::npos);
+    CHECK(text.find("WARNING") != std::string::npos);
+    CHECK(text.find(":quit") != std::string::npos);
+}
+
+TEST(ОтказПриёмникаОстанавливаетЦикл) {
+    Fixture fixture;
+    fixture.sink.close();
+    const std::vector<LogRequest> requests = fixture.run("первое\nвторое\n");
+
+    CHECK(requests.empty());
+    CHECK(fixture.output.str().find("остановлен") != std::string::npos);
 }
